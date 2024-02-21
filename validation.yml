@@ -1,0 +1,109 @@
+---
+- name: Fetch Incident and Update Incident fields data from ServiceNow
+  hosts: localhost
+  gather_facts: yes
+  vars:
+    incident_data_validator: "{{ incident_info_list }}"
+    ci_name: "16.171.64.170"  # harcoding ci_name , change it later
+    user_sys_id: "4583e347b4672110320f8dc279c804bb"
+    pat_token: "{{ pat_token }}"
+    DOP_instance: "{{ DOP_url }}"
+    credId: "12"
+    tempIdFilter: "23"
+  tasks:
+    - block:
+      - name: Display the incident data received from poller
+        debug:
+          var:  incident_data_validator
+
+      - name: Extract description using json_query
+        set_fact:        
+          description: "{{ incident_data_validator['description'] }}"
+          short_description: "{{ incident_data_validator['short_description'] }}"       
+
+      - name: print to debug
+        debug:
+          var: description   
+          
+      - name: send code of validation success
+          set_fact:
+            code: "INP03* - Automation In Progress - validation successful"
+            
+      - name: call update DOP playbook 
+          include_tasks: updateDOP.yml
+          vars:
+            work_note: "{{ code }}"
+            
+  ## calling end template by passing credId , tempId, ci-name , description , short-description
+
+      - name: Launch AAP Job Template
+        awx.awx.job_launch:
+          tower_host: "{{ var_tower_hostname }}"
+          tower_username: "{{ var_tower_username }}"
+          tower_password: "{{ var_tower_password }}"
+          validate_certs: False  # Set to True if you want to validate SSL certificates
+          job_template: "{{ tempIdFilter }}"
+          credentials:
+            - "{{ credId }}"
+          extra_vars:
+            HOSTS: "{{ ciName }}"
+            DESCRIPTION: "{{ description }}"
+        register: job_launch_result
+      
+      - name: Wait for Job Completion
+        awx.awx.job_wait:
+          tower_host: "{{ var_tower_hostname }}"
+          tower_username: "{{ var_tower_username }}"
+          tower_password: "{{ var_tower_password }}"
+          validate_certs: False  # Set to True if you want to validate SSL certificates
+          job_id: "{{ job_launch_result.id }}"
+        register: job_wait_result
+      
+      
+      - name: Display Job Details
+        debug:
+          var: job_wait_result
+
+      - name: Get job Id from job_wait_result
+        set_fact:
+          job_id: "{{ job_wait_result.id  }}"
+
+      - name: print job id 
+        debug:
+          var: job_id
+
+      - name: Get job output
+        ansible.builtin.uri:
+          url: "https://{{ var_tower_hostname }}/api/v2/jobs/{{ job_id }}/stdout/?format=txt"
+          validate_certs: no
+          method: GET
+          user: "{{ var_tower_username }}"
+          password: "{{ var_tower_password }}"
+          force_basic_auth: yes
+          return_content: yes
+        register: api_response
+  
+      - name: print response
+        debug:
+          var: api_response
+  
+      - name: Extract output msg
+        set_fact:
+          extracted_output: "{{ api_response.content | regex_search('OUTPUT: (.+?)\"') | default('') | regex_replace('\"$', '') }}"
+     
+      rescue:
+          - name: Log Output For Failure
+            debug:
+              msg: "Log : FAILED : Task {{ ansible_failed_task.name }} Failed and the ERROR: {{ ansible_failed_result }}"
+            failed_when: True
+
+          - name: send code of calling end template failure
+            set_fact:
+              code: "FAL04* - Automation Failed - {{ ansible_failed_result }}"
+            
+          - name: call update DOP playbook 
+              include_tasks: updateDOP.yml
+              vars:
+                work_note: "{{ code }}"
+
+         

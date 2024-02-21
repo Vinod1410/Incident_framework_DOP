@@ -1,0 +1,81 @@
+---
+- name: Fetch Incident and Update Incident fields data from ServiceNow
+  hosts: localhost
+  gather_facts: true
+
+  vars:
+    pat_token: "{{ pat_token }}"
+    encoded_search_queries: ""
+    DOP_url: "https://api.0bc7-dop.aws.cloud.airbus-v.corp//incident-business-service/incidents/pollMessage/1782?applicationId=34ce55de-8955-44e8-b5b8-d548b2b6b8d0"
+  tasks:
+    - block:
+        - name: Fetch Incidents based on subscription ID
+          uri:
+            url: "{{ DOP_url }}"
+            method: GET
+            headers:
+              Accept: "application/json"
+              #Authorization: "Basic {{ encoded_credentials | string }}"
+              Authorization: "Bearer {{ pat_token }}"
+            return_content: yes
+            force_basic_auth: yes
+          register: incident_data
+
+        - name: Display incident data
+          debug:
+            var: incident_data
+        # - name: send code of polling success
+        #   set_fact:
+        #     code: "INP03* - Automation In Progress - Polling successful"
+
+        - name: send code of polling success
+          debug:
+            msg: "APS: Polling success"
+          when: incident_data is defined
+
+        - name: Parse JSON data
+          set_fact:
+            incidents: "{{ incidents | default([]) + [item.body | from_json] }}"
+          loop: "{{ incident_data }}"
+
+        - name: Display fetched information
+          set_fact:
+            msg: "systemIncidentId: {{ item.systemIncidentId }}, shortDescription: {{ item.shortDescription }}, fullDescription: {{ item.fullDescription }}, impactedCi: {{ item.impactedCi }}, ticketId: {{ item.ticketId }}"
+          loop: "{{ incidents }}"
+          loop_control:
+            label: "{{ item.systemIncidentId }}"
+            
+        - name: Parse JSON data and store in variable
+          set_fact:
+            incident_info_list: "{{ incident_info_list | default([]) + [{ 'systemIncidentId': item.systemIncidentId, 'shortDescription': item.shortDescription, 'fullDescription': item.fullDescription, 'impactedCi': item.impactedCi, 'ticketId': item.ticketId }] }}"
+          loop: "{{ incidents }}"
+          loop_control:
+            label: "{{ item.systemIncidentId }}"
+
+        - name: call validator template in loop
+          include_tasks: triggering-template-validator.yml
+          vars:
+            incident_data_validator: "{{ item }}"
+          loop: "{{ incident_info_list }}"
+          loop_control:
+            loop_var: item
+  
+
+      rescue:
+        - name: Log Output For Failure
+          debug:
+            msg: "Log : FAILED : Task {{ ansible_failed_task.name }} Failed and the ERROR: {{ ansible_failed_result }}"
+          failed_when: True
+
+        - name: send code of polling Failed
+          debug:
+            msg: "APS-PNM: Polling Failed"
+          
+
+        
+          
+
+        
+
+
+
